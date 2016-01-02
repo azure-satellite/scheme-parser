@@ -4,4 +4,4 @@ import Parser
 import System.Environment
 
 main :: IO ()
-main = getArgs >>= putStrLn . readExpr . head
+main = getArgs >>= print . eval . readExpr . head

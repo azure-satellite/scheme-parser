@@ -3,7 +3,7 @@ module Parser where
 import Numeric
 import Control.Monad
 import Text.ParserCombinators.Parsec hiding (spaces)
- 
+
 data LispVal =
     Nil
     | Atom String
@@ -29,11 +29,111 @@ instance Show LispVal where
 stringify :: [LispVal] -> String
 stringify = unwords . map show
 
-readExpr :: String -> String
+readExpr :: String -> LispVal
 readExpr input =
     case parse parseExpr "lisp" input of
-        Left err -> "No match: " ++ show err
-        Right val -> "Found value"
+        Left err -> String $ "No match: " ++ show err
+        Right val -> val
+
+eval :: LispVal -> LispVal
+eval Nil                                   = Nil
+eval val@(Bool _)                          = val
+eval val@(Char _)                          = val
+eval val@(String _)                        = val
+eval val@(Number _)                        = val
+eval (List [Atom "quote", val])            = val
+eval (List [Atom "if", pred, conseq, alt]) =
+    case eval pred of
+        Bool False -> eval alt
+        _ -> eval conseq
+eval (List (Atom fun : args))              = apply fun $ map eval args
+
+apply :: String -> [LispVal] -> LispVal
+apply func args =
+    maybe (String "Function not recognized") ($ args) $ lookup func primitives
+
+------------------------------------------------------------------------
+-- Functions
+------------------------------------------------------------------------
+
+primitives :: [(String, [LispVal] -> LispVal)]
+primitives =
+    [("+", binopNumNum (+)),
+    ("-", binopNumNum (-)),
+    ("*", binopNumNum (*)),
+    ("/", binopNumNum div),
+    ("mod", binopNumNum mod),
+    ("quotient", binopNumNum quot),
+    ("remainder", binopNumNum rem),
+    ("=", binopNumBool (==)),
+    ("<", binopNumBool (<)),
+    (">", binopNumBool (>)),
+    ("/=", binopNumBool (/=)),
+    (">=", binopNumBool (>=)),
+    ("<=", binopNumBool (<=)),
+    ("&&", binopBoolBool (&&)),
+    ("||", binopBoolBool (||)),
+    ("string=?", binopStrBool (==)),
+    ("string>?", binopStrBool (>)),
+    ("string<?", binopStrBool (<)),
+    ("string<=?", binopStrBool (<=)),
+    ("string>=?", binopStrBool (>=)),
+    ("car", car),
+    ("cdr", cdr),
+    ("cons", cons),
+    ("eqv?", eqv),
+    ("eq?", eqv)]
+
+binopNumNum :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
+binopNumNum op params = Number $ foldl1 op $ map extractNum params
+
+binopNumBool :: (Integer -> Integer -> Bool) -> [LispVal] -> LispVal
+binopNumBool = boolBinop extractNum
+
+extractNum :: LispVal -> Integer
+extractNum (Number n) = n
+extractNum _ = 0
+
+binopBoolBool :: (Bool -> Bool -> Bool) -> [LispVal] -> LispVal
+binopBoolBool = boolBinop extractBool
+
+extractBool :: LispVal -> Bool
+extractBool (Bool n) = n
+extractBool _ = False
+
+binopStrBool :: (String -> String -> Bool) -> [LispVal] -> LispVal
+binopStrBool = boolBinop extractStr
+
+extractStr :: LispVal -> String
+extractStr (String n) = n
+extractStr _ = ""
+
+boolBinop :: (LispVal -> a) -> (a -> a -> Bool) -> [LispVal] -> LispVal
+boolBinop unpacker op [x, x'] = Bool $ unpacker x `op` unpacker x'
+boolBinop _ _ _ = undefined
+
+car :: [LispVal] -> LispVal
+car [List (x:_)]         = x
+car [DottedList [] x]    = x
+car [DottedList (x:_) _] = x
+car _                    = undefined
+
+cdr :: [LispVal] -> LispVal
+cdr [List (_:xs)] = List xs
+cdr [DottedList [] _] = Nil
+cdr [DottedList (_:xs) x'] = DottedList xs x'
+cdr _ = undefined
+
+cons :: [LispVal] -> LispVal
+cons [x, List xs]          = List (x:xs)
+cons [x, DottedList xs x'] = DottedList (x:xs) x'
+cons [x, x']               = DottedList [x] x'
+cons _                     = undefined
+
+eqv :: [LispVal] -> LispVal
+eqv [DottedList x y, DottedList x' y'] = Bool $ x == x' && y == y'
+eqv [x, x']                            = Bool $ x == x'
+eqv _                                  = undefined
 
 --------------------------------------------------------------------------------
 -- Parsers
@@ -131,15 +231,15 @@ parseAtom = do
 
 parseString :: Parser LispVal
 parseString = do
-    char '"'
+    _ <- char '"'
     x <- many (escapedChar <|> noneOf "\"\\")
-    char '"'
+    _ <- char '"'
     return $ String x
 
 -- Read a backslash and return the escaped char
 escapedChar :: Parser Char
 escapedChar = do
-    char '\\'
+    _ <- char '\\'
     x <- oneOf "\"\\nrt"
     return $ case x of
         '\\' -> x
@@ -152,22 +252,22 @@ parseNumber :: Parser LispVal
 parseNumber = parseDec1 <|> parseDec2 <|> parseHex <|> parseOctal
 
 parseDec1 :: Parser LispVal
-parseDec1 = many1 digit >>= return . Number . read
+parseDec1 = liftM (Number . read) (many1 digit)
 
 parseDec2 :: Parser LispVal
 parseDec2 = do
-    try $ string "#d"
-    many1 digit >>= return . Number . read
+    _ <- try $ string "#d"
+    liftM (Number . read) (many1 digit)
 
 parseHex :: Parser LispVal
 parseHex = do
-    try $ string "#x"
-    many1 hexDigit >>= return . Number . fst . (!!0) . readHex
+    _ <- try $ string "#x"
+    liftM (Number . fst . head . readHex) (many1 hexDigit)
 
 parseOctal :: Parser LispVal
 parseOctal = do
-    try $ string "#o"
-    many1 octDigit >>= return . Number . fst . (!!0) . readOct
+    _ <- try $ string "#o"
+    liftM (Number . fst . head . readOct) (many1 octDigit)
 
 parseBool :: Parser LispVal
 parseBool =
@@ -176,7 +276,7 @@ parseBool =
 
 parseChar :: Parser LispVal
 parseChar = do
-    try $ string "#\\"
+    _ <- try $ string "#\\"
     x <- anyChar
     notFollowedBy $ noneOf " "
     return $ Char x
