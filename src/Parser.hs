@@ -52,10 +52,6 @@ apply :: String -> [LispVal] -> LispVal
 apply func args =
     maybe (String "Function not recognized") ($ args) $ lookup func primitives
 
-------------------------------------------------------------------------
--- Functions
-------------------------------------------------------------------------
-
 primitives :: [(String, [LispVal] -> LispVal)]
 primitives =
     [("+", binopNumNum (+)),
@@ -252,22 +248,22 @@ parseNumber :: Parser LispVal
 parseNumber = parseDec1 <|> parseDec2 <|> parseHex <|> parseOctal
 
 parseDec1 :: Parser LispVal
-parseDec1 = liftM (Number . read) (many1 digit)
+parseDec1 = fmap (Number . read) (many1 digit)
 
 parseDec2 :: Parser LispVal
 parseDec2 = do
     _ <- try $ string "#d"
-    liftM (Number . read) (many1 digit)
+    fmap (Number . read) (many1 digit)
 
 parseHex :: Parser LispVal
 parseHex = do
     _ <- try $ string "#x"
-    liftM (Number . fst . head . readHex) (many1 hexDigit)
+    fmap (Number . fst . head . readHex) (many1 hexDigit)
 
 parseOctal :: Parser LispVal
 parseOctal = do
     _ <- try $ string "#o"
-    liftM (Number . fst . head . readOct) (many1 octDigit)
+    fmap (Number . fst . head . readOct) (many1 octDigit)
 
 parseBool :: Parser LispVal
 parseBool =
